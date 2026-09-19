@@ -1,0 +1,48 @@
+# ============================================================================
+# AI SEN — desarrollo local (tu Mac, con Docker Desktop)
+#
+# Archivo independiente: se usa SOLO, no mezclado con docker-compose.yml.
+#
+#   docker compose -f docker-compose.local.yml up -d --build
+#   → http://localhost:8899
+#
+# Diferencias con producción:
+#   · No levanta FreeLLMAPI: reutiliza el que ya corre nativo en la Mac
+#     (puerto 3001), con sus claves de proveedor ya cargadas.
+#   · Caddy sin TLS. Pedir certificado para un dominio que no apunta aquí
+#     solo haría fallar el arranque.
+#   · Publica en el 8899 (el 8080 estaba ocupado en esta máquina).
+# ============================================================================
+
+services:
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: aisen-caddy-local
+    restart: unless-stopped
+    ports:
+      - "8899:8080"
+    volumes:
+      - ./Caddyfile.local:/etc/caddy/Caddyfile:ro
+      # Se monta la carpeta, no archivo por archivo: Docker ata el montaje de
+      # un archivo suelto a su inodo, y al guardarlo el editor lo reemplaza —
+      # el contenedor se quedaría viendo la versión vieja para siempre.
+      - ../web:/srv/web:ro
+    depends_on:
+      - aisen-api
+
+  aisen-api:
+    build: ../api
+    container_name: aisen-api-local
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      # host.docker.internal = tu Mac, vista desde dentro del contenedor.
+      ENGINE_URL: http://host.docker.internal:3001/v1
+      VOICE_URL: http://host.docker.internal:8004
+      ENGINE_KEY: ${ENGINE_KEY}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # sin "ports": solo Caddy habla con la API

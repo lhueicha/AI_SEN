@@ -1,0 +1,41 @@
+# ============================================================================
+# Caddy — producción. TLS automático (Let's Encrypt) y única puerta al mundo.
+# Los bloques `handle` son excluyentes y se evalúan EN ORDEN.
+# ============================================================================
+
+{$DOMAIN} {
+	encode gzip zstd
+
+	# 1. Backend: sesión, cuota y proxy al motor. Aquí vive la ENGINE_KEY.
+	handle /api/* {
+		reverse_proxy aisen-api:8080
+	}
+
+	# 2. MCP del motor: introspección del router para agentes.
+	#    Protegido por la unified key (Bearer). Para no exponerlo, borra este
+	#    bloque y llega por túnel:  ssh -L 3001:localhost:3001 root@tu-vps
+	handle /mcp* {
+		reverse_proxy freellmapi:3001
+	}
+
+	# 3. La landing. Solo se monta ../web, que contiene únicamente lo público.
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

@@ -1,0 +1,25 @@
+# ============================================================================
+# Caddy — desarrollo local. HTTP plano en :8080 (publicado en el 8899).
+# ============================================================================
+
+:8080 {
+	encode gzip
+
+	# Backend: sesión, cuota y proxy al motor.
+	handle /api/* {
+		reverse_proxy aisen-api:8080
+	}
+
+	# La landing.
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+
+	# En desarrollo el navegador NO debe cachear: un archivo viejo guardado
+	# te hace perseguir errores que ya corregiste.
+	header {
+		Cache-Control "no-store, must-revalidate"
+	}
+}

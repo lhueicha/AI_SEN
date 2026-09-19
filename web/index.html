@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI SEN — Habla con la inteligencia</title>
+<style>
+  /* ==========================================================================
+   * AI SEN — sistema visual
+   * --------------------------------------------------------------------------
+   * Tres reglas que gobiernan todo lo de abajo:
+   *
+   * 1. TAMAÑO = JERARQUÍA. La escala salta (15 → 19 → 27 → 40), no sube de a
+   *    poco. Si dos cosas casi miden igual, el ojo no sabe cuál importa.
+   * 2. COLOR = SIGNIFICADO. Cian es el usuario y lo accionable. Rosa es SOLO
+   *    error o advertencia — si adorna, deja de avisar. Lo demás es tinta.
+   * 3. NEGRITA = GUÍA DE LECTURA. Marca el término que el lector debe
+   *    llevarse. Una negrita cada tantas líneas; si todo resalta, nada resalta.
+   * ========================================================================== */
+  :root{
+    /* Tinta: cuatro niveles, cada uno con un trabajo */
+    --ink:#eef4ff;          /* títulos y lo que debe leerse sí o sí */
+    --ink-body:#d4e0f2;     /* texto corrido */
+    --muted:#93a7c6;        /* apoyo: metadatos, ayudas */
+    --faint:#6c7f9d;        /* al borde de lo visible: sellos, marcas */
+
+    /* Color con significado */
+    --accent:#5ce1e6;       /* el usuario, lo accionable */
+    --accent-deep:#2ea8d8;
+    --danger:#ff6b9d;       /* SOLO errores y advertencias */
+
+    /* Superficies */
+    --surface:rgba(10,16,30,.58);
+    --surface-2:rgba(5,8,16,.62);
+    --glass:rgba(14,22,40,.42);
+    --glass-line:rgba(160,220,255,.16);
+    --line-strong:rgba(160,220,255,.3);
+
+    /* Escala tipográfica: saltos claros, no gradientes */
+    --t-hero:clamp(30px,5.2vw,44px);
+    --t-lead:clamp(15.5px,1.9vw,18px);
+    --t-title:19px;
+    --t-body:15.5px;
+    --t-small:13px;
+    --t-micro:10.5px;
+
+    --font:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+    --radius:26px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:var(--font);
+    color:var(--ink-body);
+    background:#05070f;
+    overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+  }
+  /* Nadie debe perder el foco al navegar con teclado */
+  :focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:8px}
+
+  /* --- Fondo: presente, nunca protagonista --- */
+  .bg{
+    position:fixed;inset:0;z-index:-2;overflow:hidden;
+    background:
+      radial-gradient(1100px 700px at 75% -10%, #12204a 0%, transparent 55%),
+      radial-gradient(900px 600px at 15% 115%, #2a0f3a 0%, transparent 55%),
+      #05070f;
+    animation:drift 18s ease-in-out infinite alternate;
+  }
+  @keyframes drift{
+    from{background-position:0 0,0 0,0 0}
+    to{background-position:6% 4%,-4% -4%,0 0}
+  }
+  .bg video{
+    width:100%;height:100%;object-fit:cover;
+    filter:saturate(1.15) contrast(1.05) brightness(.85);
+    display:none;
+  }
+  .bg.video video{display:block}
+  .bg.video{background:#05070f;animation:none}
+  .bg::after{
+    content:"";position:absolute;inset:0;
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(255,107,157,.1), transparent 60%),
+      radial-gradient(1000px 700px at 10% 110%, rgba(92,225,230,.1), transparent 60%),
+      linear-gradient(180deg, rgba(5,7,15,.55) 0%, rgba(5,7,15,.35) 40%, rgba(5,7,15,.9) 100%);
+  }
+  /* La lluvia bajó de opacidad: detrás del texto, competir es perder */
+  .rain{
+    position:fixed;inset:0;z-index:-1;pointer-events:none;
+    font-family:ui-monospace,monospace;font-size:11px;
+    color:rgba(92,225,230,.085);
+    line-height:1.5;white-space:pre;overflow:hidden;
+  }
+
+  /* --- Cabecera --- */
+  .top{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:22px 28px;
+  }
+  .logo{
+    display:flex;align-items:center;gap:10px;
+    font-weight:750;font-size:19px;letter-spacing:.16em;color:var(--ink);
+  }
+  .logo .dot{
+    width:11px;height:11px;border-radius:50%;flex:none;
+    background:linear-gradient(135deg,var(--accent),var(--danger));
+    box-shadow:0 0 16px rgba(92,225,230,.7);
+  }
+  .top .claim{
+    font-size:var(--t-small);color:var(--faint);letter-spacing:.02em;
+  }
+
+  /* --- Portada: lo primero que se entiende, antes de leer --- */
+  .hero{
+    text-align:center;padding:14px 24px 30px;
+    max-width:660px;margin:0 auto;
+  }
+  .hero h1{
+    font-size:var(--t-hero);line-height:1.08;letter-spacing:-.022em;
+    font-weight:780;color:var(--ink);
+  }
+  .hero h1 em{
+    font-style:normal;
+    background:linear-gradient(120deg,var(--accent),#9ae9ff);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .hero p{
+    margin-top:14px;font-size:var(--t-lead);line-height:1.6;
+    color:var(--muted);max-width:52ch;margin-left:auto;margin-right:auto;
+  }
+  .hero p strong{color:var(--ink);font-weight:640}
+
+  /* --- La caja: única superficie de trabajo --- */
+  .stage{
+    flex:1;display:flex;align-items:flex-start;justify-content:center;
+    padding:0 20px 28px;
+  }
+  .caja{
+    width:100%;max-width:680px;
+    border:1px solid var(--glass-line);border-radius:var(--radius);
+    padding:26px;
+    background:var(--surface);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    box-shadow:0 24px 70px rgba(0,0,0,.4);
+  }
+
+  /* --- Modos: control segmentado. UNO activo, y se nota --- */
+  .caja .modes{
+    display:flex;gap:6px;margin-bottom:20px;
+    padding:5px;border-radius:15px;
+    background:rgba(5,8,16,.5);border:1px solid var(--glass-line);
+    overflow-x:auto;scrollbar-width:none;
+  }
+  .caja .modes::-webkit-scrollbar{display:none}
+  .mode-item{display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;min-width:104px}
+  .mode{
+    width:100%;padding:9px 12px;border-radius:11px;border:1px solid transparent;
+    background:transparent;color:var(--muted);cursor:pointer;
+    font-size:14px;font-weight:550;font-family:inherit;
+    white-space:nowrap;transition:background .18s,color .18s;
+  }
+  .mode:hover{color:var(--ink);background:rgba(92,225,230,.08)}
+  .mode.active{
+    background:linear-gradient(135deg,var(--accent),var(--accent-deep));
+    color:#04141c;font-weight:700;border-color:transparent;
+    box-shadow:0 3px 14px rgba(92,225,230,.28);
+  }
+  /* Sello técnico: para quien sabe. Legible, pero jamás compite */
+  .mode-sub{
+    font-size:9px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--faint);
+  }
+
+  /* --- Conversación --- */
+  .chatbox{
+    border-radius:18px;background:var(--surface-2);border:1px solid var(--glass-line);
+    padding:22px;min-height:230px;max-height:50vh;overflow-y:auto;
+    display:flex;flex-direction:column;gap:14px;
+    scroll-behavior:smooth;
+  }
+  .chatbox .line{
+    font-size:var(--t-body);line-height:1.75;color:var(--ink-body);
+    max-width:88%;
+  }
+  /* Tú: a la derecha, en cian. El color dice de quién es sin leer */
+  .chatbox .line.user{
+    align-self:flex-end;
+    background:linear-gradient(135deg,rgba(92,225,230,.17),rgba(46,168,216,.11));
+    border:1px solid rgba(92,225,230,.34);
+    border-radius:16px 16px 4px 16px;
+    padding:11px 16px;
+  }
+  .chatbox .line.user .uname{
+    display:block;font-size:var(--t-micro);letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);margin-bottom:3px;font-weight:650;
+  }
+  /* AI SEN: a la izquierda, sobria. Su etiqueta se repite siempre,
+     así que susurra — el rosa queda reservado para los errores */
+  .chatbox .line.bot{
+    align-self:flex-start;
+    background:rgba(14,22,40,.6);
+    border:1px solid var(--glass-line);
+    border-radius:16px 16px 16px 4px;
+    padding:13px 18px;
+    box-shadow:0 6px 22px rgba(0,0,0,.26);
+  }
+  .chatbox .line.bot .aisen-label{
+    display:block;font-size:var(--t-micro);letter-spacing:.16em;text-transform:uppercase;
+    color:var(--faint);margin-bottom:5px;font-weight:650;
+  }
+  .chatbox .line.bot .aisen-body{display:block;color:var(--ink-body)}
+  .chatbox .line.bot .aisen-body p{margin:7px 0}
+  .chatbox .line.bot .aisen-body p:first-child{margin-top:0}
+  .chatbox .line.bot .aisen-body p:last-child{margin-bottom:0}
+  /* La negrita guía la lectura: sube de peso Y de brillo */
+  .chatbox .line.bot .aisen-body strong{color:#fff;font-weight:660}
+  .chatbox .line.bot .aisen-body h2,
+  .chatbox .line.bot .aisen-body h3{
+    font-size:var(--t-title);line-height:1.3;color:var(--ink);
+    margin:16px 0 6px;font-weight:700;letter-spacing:-.01em;
+  }
+  .chatbox .line.bot .aisen-body h4{font-size:15.5px;color:var(--ink);margin:13px 0 5px;font-weight:660}
+  .chatbox .line.bot .aisen-body ul,
+  .chatbox .line.bot .aisen-body ol{margin:8px 0 8px 20px}
+  .chatbox .line.bot .aisen-body li{margin:4px 0}
+  .chatbox .cursor{
+    display:inline-block;width:8px;height:15px;background:var(--accent);
+    margin-left:3px;animation:blink 1s steps(1) infinite;vertical-align:-2px;
+  }
+  @keyframes blink{50%{opacity:0}}
+
+  /* --- Identidad del usuario: es un dato, no un titular ---
+     Va en gris y pequeño para no competir con el logo. "Salir" duerme
+     apagado y solo despierta al pasar por encima: es una salida, no una
+     invitación. --- */
+  .aisen-who{
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    font-size:var(--t-small);color:var(--muted);
+  }
+  .aisen-who b{font-weight:550;color:var(--muted)}
+  .aisen-who a{
+    color:var(--faint);cursor:pointer;text-decoration:none;
+    border-bottom:1px solid transparent;transition:color .18s,border-color .18s;
+  }
+  .aisen-who a:hover{color:var(--danger);border-bottom-color:var(--danger)}
+  .aisen-plan{
+    background:rgba(92,225,230,.13);border:1px solid rgba(92,225,230,.3);
+    border-radius:999px;padding:2px 11px;color:var(--accent);
+    font-size:var(--t-micro);letter-spacing:.1em;text-transform:uppercase;
+    font-weight:650;
+  }
+
+  footer{
+    padding:18px 28px;
+    display:flex;justify-content:space-between;align-items:center;gap:16px;
+    color:var(--faint);font-size:var(--t-small);
+  }
+
+  /* ==========================================================================
+   * Ajustes del panel del tutor.
+   * Especificidad de 3 clases a propósito: app.js inyecta sus estilos DESPUÉS
+   * de esta hoja, así que con 2 clases ganaría él. Aquí mandan estas.
+   * ========================================================================== */
+
+  /* El campo del tema recortaba el texto: nacía con alto de una línea y el
+     contenido se escondía hacia arriba. Ahora respira y crece hasta un tope. */
+  .caja .aisen-tutor .tu-topic{
+    min-height:76px;max-height:170px;overflow-y:auto;
+    line-height:1.6;padding:13px 15px;
+  }
+  .caja .aisen-tutor .tu-topic::placeholder{color:var(--faint)}
+
+  /* Los atajos iban en dos filas de anchos distintos: el borde derecho
+     quedaba dentado y el ojo no encontraba dónde termina la lista.
+     Una sola fila que se desliza — ordenada y sin recortar nada. */
+  .caja .aisen-tutor .tu-chips{
+    flex-wrap:nowrap;overflow-x:auto;padding-bottom:3px;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch;
+  }
+  .caja .aisen-tutor .tu-chips::-webkit-scrollbar{display:none}
+  .caja .aisen-tutor .tu-chip{white-space:nowrap;flex:none}
+
+  /* En este modo el panel es el puesto de trabajo, no un apéndice del chat.
+     Se le da la superficie clara; la conversación de arriba es historial. */
+  .caja .aisen-tutor{
+    background:rgba(5,8,16,.62);
+    border-color:var(--line-strong);
+    padding:20px;
+  }
+  .caja .aisen-tutor .tu-title{font-size:var(--t-title);letter-spacing:-.01em}
+  .caja .aisen-tutor .tu-status{font-size:var(--t-small);line-height:1.45}
+
+  /* El sello técnico es un guiño, no un rótulo: se lee si lo buscas.
+     Antes competía con el nombre del modo, que es lo que importa. */
+  .mode-sub{font-size:8.5px;letter-spacing:.14em;color:var(--faint);opacity:.62}
+
+  /* La conversación encoge cuando hay un panel debajo: una caja enorme y
+     casi vacía hace pensar que algo falta. */
+  .caja:has(.aisen-tutor) .chatbox{min-height:120px;max-height:32vh}
+  .caja:has(.aisen-tutor) .chatbox .line{max-width:100%}
+
+  /* --- Teléfono --- */
+  @media (max-width:560px){
+    .caja{padding:18px;border-radius:20px}
+    .chatbox{padding:16px;max-height:54vh}
+    .chatbox .line{max-width:94%}
+    .hero{padding:6px 16px 24px}
+    .top,footer{padding-left:18px;padding-right:18px}
+    .top .claim{display:none}
+  }
+
+  /* --- Quien pide menos movimiento, recibe menos movimiento --- */
+  @media (prefers-reduced-motion:reduce){
+    .bg{animation:none}
+    .rain{display:none}
+    .cursor{animation:none}
+    *{transition-duration:.01ms !important}
+  }
+</style>
+</head>
+<body>
+  <div class="bg" id="bg">
+    <video autoplay muted loop playsinline poster="">
+      <source src="assets/hero.mp4" type="video/mp4">
+    </video>
+  </div>
+  <div class="rain" id="rain"></div>
+
+  <link rel="stylesheet" href="assets/katex/katex.min.css">
+  <script src="assets/katex/katex.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="config.js"></script>
+  <script src="js/auth.js" defer></script>
+  <script src="js/render.js" defer></script>
+  <script src="js/paper.js" defer></script>
+  <script src="js/brain.js" defer></script>
+  <script src="js/autoimprove.js" defer></script>
+  <script src="js/vision.js" defer></script>
+  <script src="js/lipread.js" defer></script>
+  <script src="js/pet.js" defer></script>
+  <script src="js/app.js" defer></script>
+
+  <div class="top">
+    <div class="logo"><span class="dot"></span>AI SEN</div>
+    <span class="claim">modelos gratuitos · tu voz · tu pizarra</span>
+  </div>
+
+  <!-- Portada: dice qué es esto ANTES de que nadie lea una frase.
+       El salto de tamaño (44px contra 16px) hace el trabajo solo. -->
+  <header class="hero">
+    <h1>Habla con la <em>inteligencia</em>.</h1>
+    <p>Cientos de modelos <strong>gratuitos</strong> en un solo lugar.
+       Pregunta, aprende con <strong>tu propia voz</strong> y dibuja en una
+       pizarra que entiende lo que trazas.</p>
+  </header>
+
+  <div class="stage">
+    <div class="caja">
+      <div class="modes">
+        <div class="mode-item">
+          <button class="mode active" data-mode="rapido">💬 Chatbot</button>
+          <span class="mode-sub">autorecurrence</span>
+        </div>
+        <div class="mode-item">
+          <button class="mode" data-mode="voz">🗣 Clonar voz</button>
+          <span class="mode-sub">voice tutor</span>
+        </div>
+        <div class="mode-item">
+          <button class="mode" data-mode="vision">👁 Visión</button>
+          <span class="mode-sub">computer vision</span>
+        </div>
+      </div>
+      <div class="chatbox" id="chatbox" role="log" aria-live="polite" aria-label="Conversación"></div>
+    </div>
+  </div>
+
+  <footer>
+    <span>© <span id="yr"></span> AI SEN · Hecho para despertar</span>
+  </footer>
+
+<script>
+  document.getElementById('yr').textContent = new Date().getFullYear();
+
+  // activar video solo si existe
+  (function(){
+    const v = document.querySelector('.bg video source');
+    if(v){
+      const xhr = new XMLHttpRequest();
+      xhr.open('HEAD', v.getAttribute('src'));
+      xhr.onload = function(){ if(xhr.status===200){ document.getElementById('bg').classList.add('video'); } };
+      xhr.send();
+    }
+  })();
+
+  // lluvia de codigo sutil
+  (function(){
+    const chars = '01<>{}[];=AI-SEN';
+    const w = Math.floor(window.innerWidth/14);
+    const h = Math.floor(window.innerHeight/16);
+    const rain = document.getElementById('rain');
+    function frame(){
+      let s = '';
+      for(let y=0;y<h;y++){ for(let x=0;x<w;x++){
+        s += Math.random()<0.05 ? chars[Math.floor(Math.random()*chars.length)] : ' ';
+      } s += '\n'; }
+      rain.textContent = s;
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+</script>
+</body>
+</html>

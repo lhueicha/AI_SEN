@@ -1,0 +1,20 @@
+# Secretos — nunca al repositorio
+.env
+infra/.env
+*.env.local
+*.env.save
+*.env.respaldo
+
+# Dependencias y compilados
+node_modules/
+dist/
+build/
+
+# Modelos y binarios pesados (se descargan aparte, ver docs)
+web/assets/mediapipe/*.task
+web/assets/mediapipe/wasm/
+
+# Registros y temporales
+*.log
+.DS_Store
+_archivo/

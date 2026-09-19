@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 168" width="960" height="168" role="img" aria-label="Guía de la cámara pizarra: iniciar, dibujar, guardar, seguir, guardar">
+  <rect width="960" height="168" rx="14" fill="#0a101e"/>
+  <rect x="1" y="1" width="958" height="166" rx="13" fill="none" stroke="rgba(92,225,230,.22)" stroke-width="1.5"/>
+
+  <!-- Panel 1 · Iniciar -->
+  <rect x="20" y="26" width="156" height="116" rx="12" fill="rgba(92,225,230,.07)" stroke="rgba(92,225,230,.3)"/>
+  <text x="98" y="70" font-size="30" text-anchor="middle">📹</text>
+  <text x="98" y="102" font-size="13.5" font-weight="700" text-anchor="middle" fill="#eaf2ff" font-family="system-ui, sans-serif">1 · Inicia</text>
+  <text x="98" y="120" font-size="11" text-anchor="middle" fill="#8ea3c4" font-family="system-ui, sans-serif">conecta la webcam</text>
+
+  <!-- flecha -->
+  <path d="M180 84 L210 84" stroke="#5ce1e6" stroke-width="2.5" opacity=".65" fill="none"/>
+  <path d="M206 78 L212 84 L206 90 Z" fill="#5ce1e6" opacity=".65"/>
+
+  <!-- Panel 2 · Dibuja -->
+  <rect x="216" y="26" width="156" height="116" rx="12" fill="rgba(255,212,121,.07)" stroke="rgba(255,212,121,.35)"/>
+  <text x="294" y="70" font-size="30" text-anchor="middle">👆</text>
+  <text x="294" y="102" font-size="13.5" font-weight="700" text-anchor="middle" fill="#eaf2ff" font-family="system-ui, sans-serif">2 · Dibuja</text>
+  <text x="294" y="120" font-size="11" text-anchor="middle" fill="#8ea3c4" font-family="system-ui, sans-serif">apunta con el índice</text>
+
+  <!-- flecha -->
+  <path d="M376 84 L406 84" stroke="#5ce1e6" stroke-width="2.5" opacity=".65" fill="none"/>
+  <path d="M402 78 L408 84 L402 90 Z" fill="#5ce1e6" opacity=".65"/>
+
+  <!-- Panel 3 · Guarda -->
+  <rect x="412" y="26" width="156" height="116" rx="12" fill="rgba(92,225,230,.07)" stroke="rgba(92,225,230,.3)"/>
+  <text x="490" y="70" font-size="30" text-anchor="middle">🖼️</text>
+  <text x="490" y="102" font-size="13.5" font-weight="700" text-anchor="middle" fill="#eaf2ff" font-family="system-ui, sans-serif">3 · Guarda</text>
+  <text x="490" y="120" font-size="11" text-anchor="middle" fill="#8ea3c4" font-family="system-ui, sans-serif">la página: imagen o PDF</text>
+
+  <!-- flecha -->
+  <path d="M572 84 L602 84" stroke="#5ce1e6" stroke-width="2.5" opacity=".65" fill="none"/>
+  <path d="M598 78 L604 84 L598 90 Z" fill="#5ce1e6" opacity=".65"/>
+
+  <!-- Panel 4 · Sigue -->
+  <rect x="608" y="26" width="156" height="116" rx="12" fill="rgba(255,77,141,.07)" stroke="rgba(255,77,141,.35)"/>
+  <text x="686" y="70" font-size="30" text-anchor="middle">🔁</text>
+  <text x="686" y="102" font-size="13.5" font-weight="700" text-anchor="middle" fill="#eaf2ff" font-family="system-ui, sans-serif">4 · Sigue</text>
+  <text x="686" y="120" font-size="11" text-anchor="middle" fill="#8ea3c4" font-family="system-ui, sans-serif">dibujando sin parar</text>
+
+  <!-- flecha -->
+  <path d="M768 84 L798 84" stroke="#5ce1e6" stroke-width="2.5" opacity=".65" fill="none"/>
+  <path d="M794 78 L800 84 L794 90 Z" fill="#5ce1e6" opacity=".65"/>
+
+  <!-- Panel 5 · Guarda de nuevo -->
+  <rect x="804" y="26" width="136" height="116" rx="12" fill="rgba(92,225,230,.07)" stroke="rgba(92,225,230,.3)"/>
+  <text x="872" y="70" font-size="30" text-anchor="middle">💾</text>
+  <text x="872" y="102" font-size="13.5" font-weight="700" text-anchor="middle" fill="#eaf2ff" font-family="system-ui, sans-serif">5 · Guarda</text>
+  <text x="872" y="120" font-size="11" text-anchor="middle" fill="#8ea3c4" font-family="system-ui, sans-serif">descarga tu trabajo</text>
+</svg>

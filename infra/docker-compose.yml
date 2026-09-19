@@ -1,0 +1,84 @@
+# ============================================================================
+# AI SEN — producción (VPS)
+#
+#   caddy       TLS automático + sirve web/ + única puerta al exterior
+#   aisen-api   sesión, cuota y proxy al motor (guarda la ENGINE_KEY)
+#   freellmapi  el motor: cientos de modelos gratuitos unificados
+#   chatterbox  clonación de voz (perfil "voz": pesado sin GPU)
+#
+# Solo caddy publica puertos. El resto vive en la red interna.
+#
+#   docker compose up -d --build
+# ============================================================================
+
+services:
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: aisen-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # web/ contiene SOLO lo público. Los secretos viven en infra/.env,
+      # que está fuera de esta carpeta y nunca se monta.
+      - ../web:/srv/web:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - aisen-api
+    networks: [aisen]
+
+  aisen-api:
+    build: ../api
+    container_name: aisen-api
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      ENGINE_URL: http://freellmapi:3001/v1
+      ENGINE_KEY: ${ENGINE_KEY}          # ← la clave vive aquí, nunca en el navegador
+      VOICE_URL: http://chatterbox:8004
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+    networks: [aisen]
+    # sin "ports": inalcanzable desde internet, solo a través de caddy
+
+  freellmapi:
+    build: ../../freellmapi
+    container_name: aisen-engine
+    restart: unless-stopped
+    env_file:
+      - ../../freellmapi/.env
+    environment:
+      PORT: 3001
+      HOST_BIND: 0.0.0.0
+    volumes:
+      - engine_data:/app/data
+    networks: [aisen]
+
+  # Voz. Solo con:  docker compose --profile voz up -d
+  # Sin GPU, una frase tarda entre 10 y 40 s. Ver docs/VOZ.md.
+  chatterbox:
+    image: ghcr.io/devnen/chatterbox-tts-server:latest
+    container_name: aisen-voz
+    restart: unless-stopped
+    profiles: ["voz"]
+    volumes:
+      - voice_data:/app/voices
+      - voice_ref:/app/reference_audio
+    networks: [aisen]
+
+volumes:
+  caddy_data:
+  caddy_config:
+  engine_data:
+  voice_data:
+  voice_ref:
+
+networks:
+  aisen:
+    driver: bridge
