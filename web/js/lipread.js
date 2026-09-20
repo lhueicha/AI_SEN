@@ -215,10 +215,23 @@
         audio: true
       });
       const landmarker = await loadFaceLandmarker();
+
+      // El stream trae video (para el detector de labios) Y audio (para
+      // transcribir). El MediaRecorder NO puede grabar un stream mixto con
+      // codec de solo audio — por eso separamos la pista de audio en su
+      // propio stream. El video queda para el FaceLandmarker.
+      const audioTracks = stream.getAudioTracks();
+      const audioStream = audioTracks.length ? new MediaStream(audioTracks) : stream;
+
+      // isTypeSupported responde sin construir grabadoras de prueba.
+      const CANDIDATOS = ['audio/webm;codecs=opus', 'audio/webm'];
       let mime = '';
-      try { mime = 'audio/webm;codecs=opus'; new MediaRecorder(stream, { mimeType: mime }); }
-      catch (_) { mime = ''; }
-      const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported) {
+        for (let i = 0; i < CANDIDATOS.length && !mime; i++) {
+          if (MediaRecorder.isTypeSupported(CANDIDATOS[i])) mime = CANDIDATOS[i];
+        }
+      }
+      const recorder = new MediaRecorder(audioStream, mime ? { mimeType: mime } : undefined);
       const chunks = [];
       recorder.ondataavailable = function (e) {
         if (e.data && e.data.size) chunks.push(e.data);

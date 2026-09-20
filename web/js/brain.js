@@ -1,21 +1,22 @@
 /* ============================================================================
- * AI SEN — Segundo cerebro (patrón LLM Wiki de Karpathy)
+ * AI SEN — Segundo cerebro (wiki enciclopédica, patrón LLM Wiki de Karpathy)
  * ----------------------------------------------------------------------------
  * "Deja de recuperar. Empieza a compilar." — Karpathy
  *
- * Capa 1 (RAW): log inmutable de cada conversación {ts, user, bot}.
- * Capa 2 (WIKI): cada concepto es una PÁGINA que el LLM mantiene y densifica:
- *   - menciones acumuladas con fecha (compound: reaparecer = actualizar,
- *     nunca duplicar el nodo),
- *   - wikilinks a conceptos vecinos.
- * Capa 3 (VISTA): grafo 3D interactivo A PANTALLA COMPLETA (overlay):
- *   - click en nodo → ficha del concepto (menciones, fechas, relacionados)
- *   - chips clicables → navegas la red de concepto en concepto
- *   - scroll = zoom · arrastrar = girar · buscador = ilumina coincidencias
- *   - letras claras: etiqueta en píldora oscura, aristas gruesas y brillantes
- *   - export a un .md con frontmatter y [[wikilinks]] listo para Obsidian
- *   - se abre desde el cerebrito 🧠 de la barra del chatbot, se cierra con
- *     ✕ o ESC; el chat queda intacto detrás.
+ * ESTO ES UNA WIKI, NO UN CONTADOR. Cada concepto no es "N menciones": es una
+ * ENTRADA ENCICLOPÉDICA que el motor escribe con sustancia, como Wikipedia:
+ *
+ *   Terzaghi → "Karl von Terzaghi, geotécnico austríaco, formuló la teoría
+ *   de capacidad de carga de fundaciones. Su ecuación q_ult = c·Nc + … sigue
+ *   siendo la base del diseño de cimentaciones."
+ *
+ * Capas (patrón de Karpathy):
+ *   1. RAW    — log inmutable de conversaciones {ts, user, bot}.
+ *   2. WIKI   — páginas con TEXTO desarrollado (fragmentos compilados) +
+ *               wikilinks + backlinks. El contenido se densifica con cada
+ *               mención (compound): reaparecer = ampliar, nunca duplicar.
+ *   3. VISTA  — navegador de wiki: índice lateral + página con el contenido,
+ *               sin contadores de menciones (eso no aporta nada).
  * ========================================================================== */
 (function () {
   'use strict';
@@ -26,9 +27,9 @@
   /* ----------------------------- ESTADO --------------------------------- */
   let log = load(LOG_KEY, []);            // {ts, user, bot}[]
   let graph = load(GRAPH_KEY, { nodes: {}, edges: {} });
-  // nodes: { key: { label, count, firstSeen, lastSeen, x, y, z,
-  //                 mentions: [{ts, user, bot}] } }
-  // edges: { "a||b": { weight } }
+  // nodes: { key: { label, count, firstSeen, lastSeen,
+  //                 fragments: [párrafo, ...], mentions: [{ts, user, bot}] } }
+  // edges: { "a||b": { weight } }   (co-ocurrencia → wikilinks)
 
   function load(key, fallback) {
     try {
@@ -38,6 +39,16 @@
   }
   function save(key, val) {
     try { localStorage.setItem(key, JSON.stringify(val)); } catch (_) { /* lleno */ }
+  }
+
+  // Migración: si un nodo viene de la versión anterior (con `summary` de una
+  // frase), lo convertimos a `fragments` para no perder lo ya compilado.
+  function normalizeNode(n) {
+    if (!n.fragments) {
+      n.fragments = [];
+      if (n.summary) { n.fragments.push(String(n.summary).replace(/\s+/g, ' ').trim()); delete n.summary; }
+    }
+    return n;
   }
 
   /* --------------------------- LOG DE CHATS ----------------------------- */
@@ -52,7 +63,11 @@
     save(LOG_KEY, log);
   }
 
-  /* ----------------------- EXTRACCIÓN DE CONCEPTOS ---------------------- */
+  /* ------------------- COMPILACIÓN ENCICLOPÉDICA ------------------------ */
+  // El motor escribe una entrada de Wikipedia para cada concepto clave.
+  // Formato pedido (markdown, fácil de parsear):
+  //   ## Concepto
+  //   párrafo desarrollado (2-4 frases, con sustancia)
   async function extractConcepts(userText, botText) {
     const token = window.AisenAuth && window.AisenAuth.token();
     if (!token) return;
@@ -65,8 +80,15 @@
           stream: false,
           messages: [{
             role: 'user',
-            content: 'Extrae de este texto los conceptos clave (entre 2 y 6). ' +
-              'Responde SOLO los conceptos, uno por línea, sin numerar, sin explicar.\n\n' +
+            content:
+              'Eres el editor de una wiki personal (como Wikipedia). A partir ' +
+              'de esta conversación, escribe una entrada enciclopédica para ' +
+              'cada concepto clave (máximo 3). No hagas listas ni cuentes ' +
+              'menciones: escribe TEXTO con sustancia, como lo haría Wikipedia.\n\n' +
+              'Formato exacto, un bloque por concepto:\n' +
+              '## Nombre del concepto\n' +
+              '2 a 4 frases explicando qué es, para qué sirve y por qué ' +
+              'importa, en español.\n\n' +
               'Conversación:\nUsuario: ' + userText + '\nAI: ' + botText
           }]
         })
@@ -75,45 +97,51 @@
       const content = data.choices && data.choices[0] &&
         data.choices[0].message && data.choices[0].message.content;
       if (typeof content !== 'string' || !content) return;
-      const concepts = content
-        .split(/\n|[|,;]/)
-        .map(function (c) { return c.replace(/^[\s\d.\-–>*]+/, '').trim(); })
-        .filter(function (c) { return c.length > 1 && c.length < 60; })
-        .slice(0, 6);
-      addConcepts(concepts, userText, botText);
+      parseAndCompile(content, userText, botText);
     } catch (_) { /* motor apagado: el log queda igual */ }
   }
 
-  /* ------------------- WIKI: páginas que componen ----------------------- */
-  function addConcepts(concepts, userText, botText) {
+  // Parsea el markdown "## concepto\ncontenido" y compila cada entrada.
+  function parseAndCompile(content, userText, botText) {
     const ts = new Date().toISOString();
     const seen = new Set();
-    concepts.forEach(function (c) {
-      const key = c.toLowerCase();
-      if (!graph.nodes[key]) {
-        graph.nodes[key] = {
-          label: c,
-          count: 0,
-          firstSeen: ts,
-          lastSeen: ts,
-          mentions: [],
-          x: (Math.random() - 0.5) * 2,
-          y: (Math.random() - 0.5) * 2,
-          z: (Math.random() - 0.5) * 2
-        };
+
+    const sections = [];
+    const lines = content.split(/\n/);
+    let cur = null;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const h = line.match(/^#{2,3}\s+(.+)$/);
+      if (h) {
+        if (cur) sections.push(cur);
+        cur = { title: h[1].trim(), body: [] };
+      } else if (cur) {
+        cur.body.push(line);
       }
-      const n = graph.nodes[key];
-      n.count++;
-      n.lastSeen = ts;
-      // compound: la página acumula menciones (no se duplica el nodo)
-      n.mentions.push({
-        ts: ts,
-        user: String(userText || '').slice(0, 300),
-        bot: String(botText || '').slice(0, 300)
+    }
+    if (cur) sections.push(cur);
+
+    // Fallback: formato viejo "concepto | definición".
+    if (!sections.length) {
+      lines.forEach(function (line) {
+        const sep = line.indexOf('|');
+        if (sep >= 0) {
+          sections.push({ title: line.slice(0, sep).trim(), body: [line.slice(sep + 1).trim()] });
+        }
       });
-      if (n.mentions.length > 20) n.mentions = n.mentions.slice(-20);
+    }
+
+    sections.forEach(function (sec) {
+      const label = sec.title.replace(/^[\s\d.\-–>*]+/, '').trim();
+      if (label.length < 2 || label.length > 60) return;
+      const key = label.toLowerCase();
+      const texto = sec.body.join(' ').replace(/\s+/g, ' ').trim();
+      if (!texto) return;
       seen.add(key);
+      compilePage(key, label, texto, ts, userText, botText);
     });
+
+    // co-ocurrencia → wikilinks entre conceptos que aparecen juntos.
     const keys = Array.from(seen);
     for (let i = 0; i < keys.length; i++) {
       for (let j = i + 1; j < keys.length; j++) {
@@ -123,6 +151,46 @@
       }
     }
     save(GRAPH_KEY, graph);
+  }
+
+  // Compound enciclopédico: si la página existe, se AMPLÍA con el texto
+  // nuevo (sin repetir); si es nueva, nace con su primer fragmento.
+  function compilePage(key, label, texto, ts, userText, botText) {
+    let n = graph.nodes[key];
+    if (!n) {
+      n = graph.nodes[key] = {
+        label: label,
+        count: 0,
+        firstSeen: ts,
+        lastSeen: ts,
+        fragments: [],
+        mentions: []
+      };
+    } else {
+      normalizeNode(n);
+    }
+    n.count++;
+    n.lastSeen = ts;
+    n.mentions.push({
+      ts: ts,
+      user: String(userText || '').slice(0, 300),
+      bot: String(botText || '').slice(0, 300)
+    });
+    if (n.mentions.length > 20) n.mentions = n.mentions.slice(-20);
+
+    addFragment(n, texto);
+  }
+
+  // Añade un fragmento de contenido sin duplicar (por igualdad o subcadena).
+  function addFragment(n, texto) {
+    const limpio = String(texto || '').replace(/\s+/g, ' ').trim();
+    if (limpio.length < 20) return;
+    const ya = n.fragments.some(function (f) {
+      return f === limpio || limpio.indexOf(f) >= 0 || f.indexOf(limpio) >= 0;
+    });
+    if (ya) return;
+    n.fragments.push(limpio);
+    if (n.fragments.length > 12) n.fragments = n.fragments.slice(-12);
   }
 
   function neighborsOf(key) {
@@ -147,9 +215,7 @@
     lines.push('');
     lines.push('# 🧠 Segundo Cerebro');
     lines.push('');
-    lines.push('> Wiki generada automáticamente por AI SEN (patrón LLM Wiki de Karpathy).');
-    lines.push('> ' + keys.length + ' conceptos · ' + Object.keys(graph.edges).length +
-      ' conexiones · ' + log.length + ' conversaciones.');
+    lines.push('> Wiki compilada automáticamente (patrón LLM Wiki de Karpathy).');
     lines.push('');
     lines.push('## Índice');
     lines.push('');
@@ -157,17 +223,8 @@
       lines.push('- [[' + graph.nodes[k].label + ']]');
     });
     lines.push('');
-    lines.push('## Red de conexiones');
-    lines.push('');
-    Object.keys(graph.edges).forEach(function (ek) {
-      const parts = ek.split('||');
-      const a = graph.nodes[parts[0]] ? graph.nodes[parts[0]].label : parts[0];
-      const b = graph.nodes[parts[1]] ? graph.nodes[parts[1]].label : parts[1];
-      lines.push('- [[' + a + ']] ↔ [[' + b + ']]');
-    });
-    lines.push('');
     keys.forEach(function (k) {
-      const n = graph.nodes[k];
+      const n = normalizeNode(graph.nodes[k]);
       const neigh = neighborsOf(k)
         .filter(function (nk) { return graph.nodes[nk]; })
         .map(function (nk) { return '[[' + graph.nodes[nk].label + ']]'; });
@@ -175,22 +232,14 @@
       lines.push('');
       lines.push('## ' + n.label);
       lines.push('');
-      lines.push('tags: [concepto]');
-      lines.push('created: ' + (n.firstSeen || '').slice(0, 10) +
-        ' · updated: ' + (n.lastSeen || '').slice(0, 10));
-      lines.push('menciones: ' + n.count);
-      if (neigh.length) {
+      n.fragments.forEach(function (f) {
+        lines.push(f);
         lines.push('');
-        lines.push('Relacionado con: ' + neigh.join(', '));
-      }
-      lines.push('');
-      lines.push('### Registro');
-      lines.push('');
-      (n.mentions || []).forEach(function (m) {
-        lines.push('- **' + (m.ts || '').slice(0, 10) + '** — "' + m.user.slice(0, 120) + '"');
-        if (m.bot) lines.push('  → ' + m.bot.slice(0, 140));
       });
-      lines.push('');
+      if (neigh.length) {
+        lines.push('Relacionado con: ' + neigh.join(', '));
+        lines.push('');
+      }
     });
     return lines.join('\n');
   }
@@ -207,7 +256,7 @@
     setTimeout(function () { a.remove(); URL.revokeObjectURL(url); }, 100);
   }
 
-  /* ------------------- VISTA 3D A PANTALLA COMPLETA --------------------- */
+  /* ---------------------- VISTA WIKI (no grafo) ------------------------- */
   let overlay = null;
   let view = null;
 
@@ -217,54 +266,59 @@
     s.id = 'aisen-brain-style';
     s.textContent = [
       '.brain-overlay{position:fixed;inset:0;z-index:2000;display:flex;flex-direction:column;',
-      '  padding:20px 26px;background:rgba(4,6,13,.93);backdrop-filter:blur(16px)}',
-      '.brain-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}',
+      '  padding:20px 26px;background:rgba(4,6,13,.95);backdrop-filter:blur(16px)}',
+      '.brain-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}',
       '.brain-title{font-size:19px;font-weight:800;color:var(--ink,#eaf2ff);',
       '  letter-spacing:.02em;margin-right:auto}',
-      '.brain-sub{font-size:13px;color:var(--muted,#8ea3c4)}',
-      '.brain-search{width:210px;max-width:34vw;background:rgba(5,8,16,.8);',
+      '.brain-sub{font-size:12.5px;color:var(--muted,#8ea3c4)}',
+      '.brain-search{width:220px;max-width:30vw;background:rgba(5,8,16,.8);',
       '  border:1px solid var(--glass-line,rgba(160,220,255,.2));border-radius:10px;',
       '  padding:9px 13px;color:var(--ink,#eaf2ff);font-size:13.5px;',
       '  font-family:inherit;outline:none}',
       '.brain-search:focus{border-color:var(--accent,#5ce1e6)}',
       '.brain-dl{padding:9px 16px;border-radius:10px;border:1px solid rgba(255,212,121,.55);',
-      '  background:rgba(255,212,121,.12);color:#ffd479;cursor:pointer;font-size:13.5px;',
+      '  background:rgba(255,212,121,.12);color:#ffd479;cursor:pointer;font-size:13px;',
       '  font-family:inherit;font-weight:700;transition:.2s}',
       '.brain-dl:hover{background:rgba(255,212,121,.26)}',
       '.brain-close{padding:9px 14px;border-radius:10px;border:1px solid rgba(255,77,141,.45);',
       '  background:rgba(255,77,141,.1);color:#ff4d8d;cursor:pointer;font-size:14px;',
       '  font-family:inherit;font-weight:700;transition:.2s}',
       '.brain-close:hover{background:rgba(255,77,141,.24)}',
+
+      // Layout wiki: índice lateral + página
       '.brain-layout{display:flex;gap:16px;flex:1;min-height:0}',
-      '.brain-left{flex:1;min-width:0;position:relative}',
-      '.brain-canvas{width:100%;height:100%;border-radius:16px;',
-      '  border:1px solid var(--glass-line,rgba(160,220,255,.2));',
-      '  background:rgba(5,8,16,.6);cursor:grab;display:block}',
-      '.brain-canvas:active{cursor:grabbing}',
-      '.brain-tip{position:absolute;z-index:10;background:rgba(14,22,40,.97);',
-      '  border:1px solid rgba(92,225,230,.5);border-radius:10px;padding:9px 13px;',
-      '  font-size:13px;color:var(--ink,#eaf2ff);pointer-events:none;max-width:280px;',
-      '  box-shadow:0 8px 26px rgba(0,0,0,.55)}',
-      '.brain-tip b{color:var(--accent,#5ce1e6)}',
-      '.brain-panel{width:320px;flex:none;border:1px solid var(--glass-line,rgba(160,220,255,.2));',
-      '  border-radius:16px;background:rgba(10,16,30,.7);padding:18px;overflow-y:auto}',
-      '.brain-panel .bp-empty{color:var(--muted,#8ea3c4);font-size:13.5px;line-height:1.65}',
-      '.brain-panel .bp-title{font-size:19px;font-weight:800;color:var(--ink,#eaf2ff);',
-      '  margin-bottom:5px;line-height:1.3}',
-      '.brain-panel .bp-meta{font-size:12px;color:var(--muted,#8ea3c4);margin-bottom:12px}',
-      '.brain-panel .bp-chips{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px}',
-      '.brain-panel .bp-chip{padding:6px 12px;border-radius:999px;',
-      '  border:1px solid rgba(92,225,230,.45);background:rgba(92,225,230,.1);',
-      '  color:var(--accent,#5ce1e6);font-size:12.5px;cursor:pointer;',
-      '  font-family:inherit;transition:.15s}',
-      '.brain-panel .bp-chip:hover{background:rgba(92,225,230,.3)}',
-      '.brain-panel .bp-mention{border-left:2px solid rgba(255,77,141,.45);',
-      '  padding:5px 0 5px 12px;margin-bottom:10px;font-size:13px;',
-      '  color:var(--muted,#8ea3c4);line-height:1.55}',
-      '.brain-panel .bp-mention b{color:var(--ink,#eaf2ff);font-weight:700}',
-      '.brain-hint{font-size:12.5px;color:var(--muted,#8ea3c4);opacity:.8;margin-top:10px}',
+      '.brain-index{width:250px;flex:none;border:1px solid var(--glass-line,rgba(160,220,255,.2));',
+      '  border-radius:14px;background:rgba(10,16,30,.6);padding:12px;overflow-y:auto}',
+      '.brain-index h4{font-size:11px;letter-spacing:.12em;text-transform:uppercase;',
+      '  color:var(--muted,#8ea3c4);margin:2px 4px 10px;font-weight:700}',
+      '.brain-idx-item{padding:8px 11px;border-radius:9px;cursor:pointer;font-size:13.5px;',
+      '  color:var(--ink-body,#d4e0f2);transition:.15s}',
+      '.brain-idx-item:hover{background:rgba(92,225,230,.1)}',
+      '.brain-idx-item.on{background:rgba(92,225,230,.18);color:var(--ink,#eaf2ff);font-weight:650}',
+      '.brain-empty{color:var(--muted,#8ea3c4);font-size:13px;line-height:1.6;padding:4px}',
+
+      // Página del concepto (como entrada de Wikipedia)
+      '.brain-page{flex:1;min-width:0;border:1px solid var(--glass-line,rgba(160,220,255,.2));',
+      '  border-radius:14px;background:rgba(10,16,30,.55);padding:26px 30px;overflow-y:auto}',
+      '.bp-breadcrumb{font-size:12px;color:var(--muted,#8ea3c4);margin-bottom:6px}',
+      '.bp-breadcrumb button{background:none;border:none;color:var(--accent,#5ce1e6);',
+      '  cursor:pointer;font-family:inherit;font-size:12px;padding:0}',
+      '.bp-title{font-size:27px;font-weight:800;color:var(--ink,#eaf2ff);',
+      '  line-height:1.2;margin-bottom:14px;border-bottom:1px solid var(--glass-line,rgba(160,220,255,.18));',
+      '  padding-bottom:12px}',
+      '.bp-para{font-size:15.5px;line-height:1.75;color:var(--ink-body,#d4e0f2);',
+      '  margin-bottom:14px}',
+      '.bp-section{margin-top:22px}',
+      '.bp-section .lbl{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;',
+      '  color:var(--muted,#8ea3c4);margin-bottom:9px;font-weight:700}',
+      '.bp-chips{display:flex;flex-wrap:wrap;gap:7px}',
+      '.bp-chip{padding:6px 13px;border-radius:999px;border:1px solid rgba(92,225,230,.45);',
+      '  background:rgba(92,225,230,.1);color:var(--accent,#5ce1e6);font-size:13px;',
+      '  cursor:pointer;font-family:inherit;transition:.15s}',
+      '.bp-chip:hover{background:rgba(92,225,230,.3)}',
+      '.bp-chip.bl{background:rgba(255,212,121,.08);border-color:rgba(255,212,121,.4);color:#ffd479}',
       '@media(max-width:720px){.brain-overlay{padding:12px}.brain-layout{flex-direction:column}',
-      '  .brain-panel{width:100%;max-height:34vh}}'
+      '  .brain-index{width:100%;max-height:32vh}.brain-page{flex:1}}'
     ].join('\n');
     document.head.appendChild(s);
   }
@@ -274,7 +328,7 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
-  function render3D() {
+  function renderWiki() {
     injectStyles();
     const ov = document.createElement('div');
     ov.className = 'brain-overlay';
@@ -284,377 +338,155 @@
     top.innerHTML =
       '<span class="brain-title">🧠 Segundo cerebro</span>' +
       '<span class="brain-sub" id="brainStats"></span>' +
-      '<input class="brain-search" id="brainSearch" placeholder="Buscar concepto…">' +
-      '<button class="brain-dl" id="brainDl">⬇ Wiki .md (Obsidian)</button>' +
-      '<button class="brain-close" id="brainClose" title="Cerrar (ESC)">✕ Cerrar</button>';
+      '<input class="brain-search" id="brainSearch" placeholder="Buscar…">' +
+      '<button class="brain-dl" id="brainDl">⬇ Wiki .md</button>' +
+      '<button class="brain-close" id="brainClose" title="Cerrar (ESC)">✕</button>';
     ov.appendChild(top);
 
     const layout = document.createElement('div');
     layout.className = 'brain-layout';
 
-    const left = document.createElement('div');
-    left.className = 'brain-left';
-    const canvas = document.createElement('canvas');
-    canvas.className = 'brain-canvas';
-    left.appendChild(canvas);
-    const tip = document.createElement('div');
-    tip.className = 'brain-tip';
-    tip.style.display = 'none';
-    left.appendChild(tip);
-    layout.appendChild(left);
+    const index = document.createElement('div');
+    index.className = 'brain-index';
+    layout.appendChild(index);
 
-    const panel = document.createElement('div');
-    panel.className = 'brain-panel';
-    panel.innerHTML = '<div class="bp-empty">Haz clic en un nodo para ver su ' +
-      'conocimiento: menciones con fecha y conceptos conectados. Los chips te ' +
-      'llevan de concepto en concepto. ⬇ descarga la wiki completa para Obsidian.</div>';
-    layout.appendChild(panel);
+    const page = document.createElement('div');
+    page.className = 'brain-page';
+    layout.appendChild(page);
 
-    const hint = document.createElement('div');
-    hint.className = 'brain-hint';
-    hint.textContent = 'click = ficha del concepto · scroll = zoom · arrastrar = girar · ✕ o ESC = cerrar';
     ov.appendChild(layout);
-    ov.appendChild(hint);
-
     document.body.appendChild(ov);
     overlay = ov;
 
-    const ctx = canvas.getContext('2d');
-    const keys = Object.keys(graph.nodes);
-    const nodes = keys.map(function (k) { return graph.nodes[k]; });
-
-    let rotY = 0, rotX = -0.25, dist = 4.6;
-    let drag = false, moved = 0, lastX = 0, lastY = 0;
-    let hoverIdx = -1;
-    let selectedKey = null;
+    let currentKey = null;
+    let history = [];
     let filter = '';
-    let alive = true;
-    let resizeHandler = null, escHandler = null;
 
-    function size() {
-      const w = left.clientWidth || 800;
-      const h = left.clientHeight || 500;
-      canvas.width = Math.round(w * (window.devicePixelRatio || 1));
-      canvas.height = Math.round(h * (window.devicePixelRatio || 1));
-      canvas.style.width = w + 'px';
-      canvas.style.height = h + 'px';
-    }
-    size();
-    requestAnimationFrame(size); // segunda pasada con el layout ya resuelto
-    resizeHandler = function () { size(); };
-    window.addEventListener('resize', resizeHandler);
-
-    if (nodes.length && graph.nodes[keys[0]]._placed === undefined) {
-      const golden = Math.PI * (3 - Math.sqrt(5));
-      nodes.forEach(function (n, i) {
-        const t = i / Math.max(1, nodes.length - 1);
-        const phi = Math.acos(1 - 2 * t);
-        const theta = golden * i;
-        n.x = 1.5 * Math.sin(phi) * Math.cos(theta);
-        n.y = 1.5 * Math.sin(phi) * Math.sin(theta);
-        n.z = 1.5 * Math.cos(phi);
-        n._placed = true;
+    function sortedKeys() {
+      return Object.keys(graph.nodes).sort(function (a, b) {
+        return graph.nodes[b].count - graph.nodes[a].count;
       });
-      save(GRAPH_KEY, graph);
     }
 
-    function project(n) {
-      const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
-      const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
-      let x = n.x * cosY - n.z * sinY;
-      let z = n.x * sinY + n.z * cosY;
-      let y = n.y * cosX - z * sinX;
-      z = n.y * sinX + z * cosX;
-      const s = dist / (dist + z);
-      const cw = canvas.width / (window.devicePixelRatio || 1);
-      const ch = canvas.height / (window.devicePixelRatio || 1);
-      return { x: cw / 2 + x * s * cw * 0.34, y: ch / 2 + y * s * ch * 0.34, s: s };
-    }
-
-    function matched(key) {
-      if (!filter) return true;
-      return graph.nodes[key].label.toLowerCase().indexOf(filter) >= 0;
-    }
-
-    function isNeighbor(key) {
-      if (!selectedKey) return true;
-      if (key === selectedKey) return true;
-      const set = new Set(neighborsOf(selectedKey));
-      return set.has(key);
-    }
-
-    function nodeAlpha(key) {
-      if (!matched(key)) return 0.06;
-      if (selectedKey && !isNeighbor(key)) return 0.12;
-      return 1;
-    }
-
-    // Píldora redondeada detrás de cada etiqueta: letras claras sobre el fondo.
-    function pill(x, y, w, h, r) {
-      ctx.beginPath();
-      ctx.moveTo(x + r, y);
-      ctx.arcTo(x + w, y, x + w, y + h, r);
-      ctx.arcTo(x + w, y + h, x, y + h, r);
-      ctx.arcTo(x, y + h, x, y, r);
-      ctx.arcTo(x, y, x + w, y, r);
-      ctx.closePath();
-    }
-
-    function draw() {
-      if (!alive) return;
-      const cw = canvas.width / (window.devicePixelRatio || 1);
-      const ch = canvas.height / (window.devicePixelRatio || 1);
-      ctx.clearRect(0, 0, cw, ch);
-      const bg = ctx.createRadialGradient(cw / 2, ch / 2, 40, cw / 2, ch / 2, cw * 0.62);
-      bg.addColorStop(0, 'rgba(92,225,230,.06)');
-      bg.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, cw, ch);
-
+    function renderIndex() {
+      const keys = sortedKeys().filter(function (k) {
+        return !filter || graph.nodes[k].label.toLowerCase().indexOf(filter) >= 0;
+      });
       if (!keys.length) {
-        ctx.fillStyle = '#8ea3c4';
-        ctx.font = '600 15px Inter, system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('Todavía no hay conceptos.', cw / 2, ch / 2 - 8);
-        ctx.fillText('Conversa con el chatbot y vuelve a abrir el cerebro.', cw / 2, ch / 2 + 16);
+        index.innerHTML =
+          '<h4>Índice</h4><div class="brain-empty">' +
+          (Object.keys(graph.nodes).length
+            ? 'Sin coincidencias.'
+            : 'Todavía no hay conceptos. Conversa con el chatbot: cada tema ' +
+              'se vuelve una entrada de tu wiki.') + '</div>';
         return;
       }
-
-      const proj = nodes.map(project);
-      const selNeighbors = selectedKey ? new Set(neighborsOf(selectedKey)) : null;
-      const showAllLabels = keys.length <= 50;
-
-      Object.keys(graph.edges).forEach(function (ek) {
-        const parts = ek.split('||');
-        const ia = keys.indexOf(parts[0]);
-        const ib = keys.indexOf(parts[1]);
-        if (ia < 0 || ib < 0) return;
-        const e = graph.edges[ek];
-        let alpha = Math.min(0.9, 0.25 + e.weight * 0.1);
-        let width = Math.min(4.5, 1 + e.weight * 0.6);
-        let color = '150,235,255';
-        if (selectedKey) {
-          const touches = parts[0] === selectedKey || parts[1] === selectedKey;
-          if (touches) { alpha = 0.95; width = Math.min(5, width + 1.4); color = '255,77,141'; }
-          else if (!(selNeighbors.has(parts[0]) || selNeighbors.has(parts[1]))) {
-            alpha = 0.05;
-          }
-        }
-        if (!matched(parts[0]) && !matched(parts[1])) alpha = 0.03;
-        ctx.strokeStyle = 'rgba(' + color + ',' + alpha.toFixed(2) + ')';
-        ctx.lineWidth = width;
-        ctx.beginPath();
-        ctx.moveTo(proj[ia].x, proj[ia].y);
-        ctx.lineTo(proj[ib].x, proj[ib].y);
-        ctx.stroke();
+      const items = keys.map(function (k) {
+        return '<div class="brain-idx-item' + (k === currentKey ? ' on' : '') +
+          '" data-key="' + esc(k) + '">' + esc(graph.nodes[k].label) + '</div>';
+      }).join('');
+      index.innerHTML = '<h4>Índice</h4>' + items;
+      index.querySelectorAll('.brain-idx-item').forEach(function (el) {
+        el.addEventListener('click', function () {
+          openPage(el.getAttribute('data-key'));
+        });
       });
-
-      proj.forEach(function (p, i) {
-        const n = nodes[i];
-        const key = keys[i];
-        const alpha = nodeAlpha(key);
-        if (alpha < 0.1) return;
-        const radius = (4 + Math.min(10, n.count * 1.6)) * p.s;
-        const selected = key === selectedKey;
-        const hovered = i === hoverIdx && !selectedKey;
-        const glowColor = selected ? '255,77,141' : (hovered ? '255,212,121' : '92,225,230');
-        ctx.globalAlpha = alpha;
-        const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius * 3);
-        glow.addColorStop(0, 'rgba(' + glowColor + ',.85)');
-        glow.addColorStop(1, 'rgba(92,225,230,0)');
-        ctx.fillStyle = glow;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, radius * 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = selected ? '#ff4d8d' : '#5ce1e6';
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-        ctx.fill();
-        if (selected) {
-          ctx.strokeStyle = 'rgba(255,77,141,.9)';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, radius + 4, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-        // Etiqueta clara: píldora oscura + texto brillante.
-        const showLabel = selected || hovered || n.count >= 2 || showAllLabels;
-        if (showLabel) {
-          const label = n.label.slice(0, 26);
-          const fs = selected ? 15 : (hovered ? 14 : 12.5);
-          ctx.font = '700 ' + fs + 'px Inter, system-ui, sans-serif';
-          const tw = ctx.measureText(label).width;
-          const cx = p.x;
-          const cy = p.y - radius - 12;
-          pill(cx - tw / 2 - 8, cy - fs - 2, tw + 16, fs + 6, 8);
-          ctx.fillStyle = 'rgba(5,8,16,.88)';
-          ctx.fill();
-          ctx.strokeStyle = selected ? 'rgba(255,77,141,.6)' : 'rgba(92,225,230,.3)';
-          ctx.lineWidth = 1;
-          pill(cx - tw / 2 - 8, cy - fs - 2, tw + 16, fs + 6, 8);
-          ctx.stroke();
-          ctx.fillStyle = '#eaf2ff';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(label, cx, cy + 1);
-        }
-        ctx.globalAlpha = 1;
-      });
-
-      if (!drag) rotY += 0.0012;
-      if (alive) requestAnimationFrame(draw);
-    }
-    draw();
-
-    function pick(e) {
-      const rect = canvas.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
-      const proj = nodes.map(project);
-      let best = -1, bestDist = 1e9;
-      proj.forEach(function (p, i) {
-        const d = Math.hypot(p.x - mx, p.y - my);
-        const radius = (4 + Math.min(10, nodes[i].count * 1.6)) * p.s;
-        if (d < Math.max(radius * 3, 16) && d < bestDist) { bestDist = d; best = i; }
-      });
-      return best;
     }
 
-    function updatePanel() {
-      if (!selectedKey) {
-        panel.innerHTML = '<div class="bp-empty">Haz clic en un nodo para ver su ' +
-          'conocimiento: menciones con fecha y conceptos conectados. Los chips te ' +
-          'llevan de concepto en concepto. ⬇ descarga la wiki completa para Obsidian.</div>';
-        return;
+    function openPage(key, push) {
+      if (!graph.nodes[key]) return;
+      // Sin repetidos seguidos: si no, "atras" no lleva a ninguna parte.
+      if (push !== false && history[history.length - 1] !== key) history.push(key);
+      currentKey = key;
+      renderIndex();
+      renderPage(key);
+    }
+
+    function renderPage(key) {
+      const n = normalizeNode(graph.nodes[key]);
+      const neigh = neighborsOf(key).filter(function (k) { return graph.nodes[k]; });
+      const html = [];
+
+      if (history.length > 1) {
+        html.push('<div class="bp-breadcrumb"><button id="bpBack">← atrás</button></div>');
       }
-      const n = graph.nodes[selectedKey];
-      const neigh = neighborsOf(selectedKey).filter(function (k) { return graph.nodes[k]; });
-      const html = ['<div class="bp-title">' + esc(n.label) + '</div>',
-        '<div class="bp-meta">' + n.count + ' menciones · desde ' +
-        (n.firstSeen || '').slice(0, 10) + ' · última ' + (n.lastSeen || '').slice(0, 10) + '</div>'];
+      html.push('<div class="bp-title">' + esc(n.label) + '</div>');
+
+      // El contenido: los fragmentos enciclopédicos compilados.
+      (n.fragments || []).forEach(function (f) {
+        html.push('<p class="bp-para">' + esc(f) + '</p>');
+      });
+      if (!n.fragments.length) {
+        html.push('<p class="bp-para" style="opacity:.6">Este concepto se ' +
+          'mencionó pero aún no tiene contenido compilado. Volverá a crecer ' +
+          'la próxima vez que hables de él.</p>');
+      }
+
       if (neigh.length) {
-        html.push('<div class="bp-chips">');
-        neigh.forEach(function (nk) {
-          html.push('<button class="bp-chip" data-key="' + esc(nk) + '">' +
-            esc(graph.nodes[nk].label) + '</button>');
-        });
-        html.push('</div>');
+        html.push('<div class="bp-section"><span class="lbl">Relacionado</span>' +
+          '<div class="bp-chips">' +
+          neigh.map(function (nk) {
+            return '<button class="bp-chip" data-key="' + esc(nk) + '">' +
+              esc(graph.nodes[nk].label) + '</button>';
+          }).join('') + '</div></div>');
       }
-      (n.mentions || []).slice(-4).reverse().forEach(function (m) {
-        html.push('<div class="bp-mention"><b>' + (m.ts || '').slice(0, 10) + '</b><br>' +
-          esc(m.user.slice(0, 140)) + '</div>');
-      });
-      panel.innerHTML = html.join('');
-      panel.querySelectorAll('.bp-chip').forEach(function (chip) {
+
+      page.innerHTML = html.join('');
+      page.scrollTop = 0;
+
+      const backBtn = page.querySelector('#bpBack');
+      if (backBtn) {
+        backBtn.addEventListener('click', function () {
+          history.pop();
+          const prev = history.length ? history[history.length - 1] : null;
+          if (prev) openPage(prev, false);
+          else { currentKey = null; renderIndex(); renderEmptyPage(); }
+        });
+      }
+      page.querySelectorAll('.bp-chip').forEach(function (chip) {
         chip.addEventListener('click', function () {
-          selectNode(chip.getAttribute('data-key'));
+          openPage(chip.getAttribute('data-key'));
         });
       });
     }
 
-    function selectNode(key) {
-      selectedKey = (selectedKey === key) ? null : key;
-      updatePanel();
+    function renderEmptyPage() {
+      page.innerHTML =
+        '<div class="bp-title" style="font-size:21px">Tu enciclopedia</div>' +
+        '<p class="bp-para">Esto es una wiki viva, como una Wikipedia personal. ' +
+        'Cada tema del que hablas se vuelve una entrada con su explicación, ' +
+        'y cada entrada enlaza a las relacionadas. Pulsa cualquier concepto ' +
+        'del índice para leerlo.</p>';
     }
 
     function updateStats() {
       const el = document.getElementById('brainStats');
       if (el) {
-        el.textContent = keys.length + ' conceptos · ' +
-          Object.keys(graph.edges).length + ' conexiones · ' + log.length + ' conversaciones';
+        el.textContent = Object.keys(graph.nodes).length + ' entradas · ' +
+          log.length + ' conversaciones';
       }
     }
+
     updateStats();
-
-    canvas.addEventListener('mousemove', function (e) {
-      if (drag) {
-        const dx = e.clientX - lastX, dy = e.clientY - lastY;
-        moved += Math.abs(dx) + Math.abs(dy);
-        rotY += dx * 0.006;
-        rotX += dy * 0.006;
-        rotX = Math.max(-1.2, Math.min(1.2, rotX));
-        lastX = e.clientX; lastY = e.clientY;
-        return;
-      }
-      const idx = pick(e);
-      hoverIdx = idx;
-      if (idx >= 0 && !selectedKey) {
-        const n = nodes[idx];
-        tip.innerHTML = '<b>' + esc(n.label) + '</b> · ' + n.count + ' menciones';
-        tip.style.display = 'block';
-        tip.style.left = (e.clientX - canvas.getBoundingClientRect().left + 16) + 'px';
-        tip.style.top = (e.clientY - canvas.getBoundingClientRect().top - 10) + 'px';
-      } else {
-        tip.style.display = 'none';
-      }
-    });
-
-    canvas.addEventListener('mousedown', function (e) {
-      drag = true; moved = 0;
-      lastX = e.clientX; lastY = e.clientY;
-    });
-
-    window.addEventListener('mouseup', function (e) {
-      if (drag && moved < 6) {
-        const idx = pick(e);
-        if (idx >= 0) selectNode(keys[idx]);
-        else if (e.target === canvas) selectNode(null);
-      }
-      drag = false;
-    });
-
-    canvas.addEventListener('wheel', function (e) {
-      e.preventDefault();
-      dist = Math.max(2.4, Math.min(8, dist + e.deltaY * 0.004));
-    }, { passive: false });
-
-    canvas.addEventListener('mouseleave', function () {
-      tip.style.display = 'none'; hoverIdx = -1;
-    });
-
-    canvas.addEventListener('touchstart', function (e) {
-      if (e.touches.length === 1) {
-        drag = true; moved = 0;
-        lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
-      }
-    }, { passive: true });
-    canvas.addEventListener('touchmove', function (e) {
-      if (e.touches.length === 1) {
-        const dx = e.touches[0].clientX - lastX;
-        const dy = e.touches[0].clientY - lastY;
-        moved += Math.abs(dx) + Math.abs(dy);
-        rotY += dx * 0.006;
-        rotX += dy * 0.006;
-        rotX = Math.max(-1.2, Math.min(1.2, rotX));
-        lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
-        e.preventDefault();
-      }
-    }, { passive: false });
-    canvas.addEventListener('touchend', function (e) {
-      if (drag && moved < 6 && e.changedTouches.length) {
-        const idx = pick(e.changedTouches[0]);
-        if (idx >= 0) selectNode(keys[idx]);
-      }
-      drag = false;
-    });
+    renderIndex();
+    renderEmptyPage();
 
     const search = document.getElementById('brainSearch');
     if (search) {
       search.addEventListener('input', function () {
         filter = search.value.trim().toLowerCase();
+        renderIndex();
       });
     }
     const dl = document.getElementById('brainDl');
     if (dl) dl.addEventListener('click', downloadWiki);
 
     function close() {
-      alive = false;
-      if (resizeHandler) window.removeEventListener('resize', resizeHandler);
       if (escHandler) document.removeEventListener('keydown', escHandler);
       if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
       overlay = null; view = null;
     }
-    escHandler = function (e) { if (e.key === 'Escape') close(); };
+    const escHandler = function (e) { if (e.key === 'Escape') close(); };
     document.addEventListener('keydown', escHandler);
     const closeBtn = document.getElementById('brainClose');
     if (closeBtn) closeBtn.addEventListener('click', close);
@@ -663,8 +495,8 @@
   }
 
   function showBrain() {
-    if (overlay) return; // ya está abierta
-    render3D();
+    if (overlay) return;
+    renderWiki();
   }
 
   function closeBrain() {
@@ -677,7 +509,7 @@
     extractConcepts: extractConcepts,
     show: showBrain,
     close: closeBrain,
-    destroy: closeBrain, // alias: compatibilidad con llamadas anteriores
+    destroy: closeBrain,
     exportMarkdown: downloadWiki,
     buildMarkdown: buildWikiMarkdown,
     graphStats: function () {

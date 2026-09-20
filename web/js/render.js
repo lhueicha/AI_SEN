@@ -15,6 +15,9 @@ function mdEscape(s) {
 }
 
 function mdInline(s) {
+  // Cuando esta funcion corre, el LaTeX ya se compilo y vive como marcador
+  // \u0000N\u0000 (ver renderMarkdown): aqui solo queda markdown, asi que
+  // los * y ** nunca pueden meterse dentro de una formula.
   // orden: codigo, negrita, cursiva
   return s
     .replace(/`([^`]+)`/g, '<code>$1</code>')
@@ -68,9 +71,13 @@ function renderMarkdown(src) {
   // bloques de codigo ```...```
   text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) =>
     stash('<pre class="md-code"><code>' + mdEscape(code) + '</code></pre>'));
-  // matematicas en bloque $$...$$
+  // matematicas en bloque $$...$$ y \[...\] (LaTeX estándar)
   text = text.replace(/\$\$([\s\S]+?)\$\$/g, (m, tex) => stash(texToHtml(tex, true)));
-  // matematicas inline $...$ (no codicioso, evita $$ ya consumidos)
+  text = text.replace(/\\\[([\s\S]+?)\\\]/g, (m, tex) => stash(texToHtml(tex, true)));
+  // matematicas inline \(...\) y $...$: se guardan AQUI, antes del markdown.
+  // Si se procesaran despues, `**` y `*` ya habrian partido la formula y KaTeX
+  // recibiria HTML en vez de TeX (p. ej. $x**2$ -> x<strong>2</strong>).
+  text = text.replace(/\\\(([\s\S]+?)\\\)/g, (m, tex) => stash(texToHtml(tex, false)));
   text = text.replace(/\$([^\n$]+?)\$/g, (m, tex) => stash(texToHtml(tex, false)));
 
   // Tablas: bloques de líneas | ... | que incluyan un separador ---

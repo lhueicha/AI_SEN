@@ -935,7 +935,8 @@
   // tablas, figuras, ecuaciones numeradas y referencias.
   function openPaperWindow(rawText, titulo) {
     if (window.AisenPaper) {
-      window.AisenPaper.abrir(rawText, titulo || 'AI SEN — Documento');
+      // Sin titulo explicito, paper.js lo deduce del primer encabezado.
+      window.AisenPaper.abrir(rawText, titulo);
       return;
     }
     alert('El generador de documentos no cargó. Recarga la página.');
